@@ -1,0 +1,98 @@
+name: Step 1
+
+# Define how the workflow is triggered.
+on:
+  push:
+    paths:
+      - 'docs/Tasks.md'
+      - 'docs/ImplementationPlan.md'
+
+permissions:
+  contents: write
+  actions: write
+  issues: write
+
+jobs:
+  exercise_checking:
+    name: Start checking
+    uses: ./.github/workflows/exercise-checking.yml
+
+  validate_documents:
+    name: Validate Task and Implementation Plan Documents
+    runs-on: ubuntu-latest
+    needs: exercise_checking
+    if: needs.exercise_checking.outputs.comment-id != ''
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check that docs/Tasks.md exists and has content
+        run: |
+          if [ ! -f docs/Tasks.md ]; then
+            echo "::error::docs/Tasks.md not found"
+            exit 1
+          fi
+          CHAR_COUNT=$(wc -m < docs/Tasks.md)
+          if [ "$CHAR_COUNT" -lt 200 ]; then
+            echo "::error::docs/Tasks.md appears too short ($CHAR_COUNT chars). Add meaningful task descriptions."
+            exit 1
+          fi
+          echo "docs/Tasks.md exists ($CHAR_COUNT chars)"
+
+      - name: Check that docs/ImplementationPlan.md exists and has content
+        run: |
+          if [ ! -f docs/ImplementationPlan.md ]; then
+            echo "::error::docs/ImplementationPlan.md not found"
+            exit 1
+          fi
+          CHAR_COUNT=$(wc -m < docs/ImplementationPlan.md)
+          if [ "$CHAR_COUNT" -lt 200 ]; then
+            echo "::error::docs/ImplementationPlan.md appears too short ($CHAR_COUNT chars). Add a meaningful implementation plan."
+            exit 1
+          fi
+          echo "docs/ImplementationPlan.md exists ($CHAR_COUNT chars)"
+
+      - name: Validate Tasks.md structure
+        run: |
+          echo "Checking docs/Tasks.md for expected structure..."
+          HEADINGS=$(grep -c '^#' docs/Tasks.md || true)
+          if [ "$HEADINGS" -lt 2 ]; then
+            echo "::error::docs/Tasks.md should have at least 2 markdown headings to organize tasks."
+            exit 1
+          fi
+          CHECKBOXES=$(grep -c '\- \[.\]' docs/Tasks.md || true)
+          if [ "$CHECKBOXES" -lt 3 ]; then
+            echo "::error::docs/Tasks.md should contain at least 3 task items (checkbox list items)."
+            exit 1
+          fi
+          echo "Found $HEADINGS headings and $CHECKBOXES task items."
+
+      - name: Validate ImplementationPlan.md structure
+        run: |
+          echo "Checking docs/ImplementationPlan.md for expected structure..."
+          HEADINGS=$(grep -c '^#' docs/ImplementationPlan.md || true)
+          if [ "$HEADINGS" -lt 2 ]; then
+            echo "::error::docs/ImplementationPlan.md should have at least 2 markdown headings to organize the plan."
+            exit 1
+          fi
+          echo "Found $HEADINGS headings."
+
+  exercise_passed:
+    name: Exercise passed
+    needs: [exercise_checking, validate_documents]
+    if: needs.validate_documents.result == 'success'
+    uses: ./.github/workflows/exercise-passed.yml
+    with:
+      module-title: "Task Specification"
+      issue-url: ${{ needs.exercise_checking.outputs.issue-url }}
+      issue-number: ${{ needs.exercise_checking.outputs.issue-number }}
+      comment-id: ${{ needs.exercise_checking.outputs.comment-id }}
+
+  exercise_failed:
+    name: Exercise failed
+    needs: [exercise_checking, validate_documents]
+    if: always() && needs.validate_documents.result == 'failure'
+    uses: ./.github/workflows/exercise-failed.yml
+    with:
+      comment-id: ${{ needs.exercise_checking.outputs.comment-id }}
+      feedback-message: "Validation failed. Please check that both `docs/Tasks.md` and `docs/ImplementationPlan.md` exist, contain enough content (at least 200 characters each), and have proper markdown structure (headings, task checkboxes in Tasks.md)."

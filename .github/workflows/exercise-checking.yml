@@ -1,0 +1,80 @@
+name: Exercise Checking
+
+# Shared exercise workflow: identical in every exercise repo. It is maintained
+# centrally and copied into each repo, so don't edit it per repo. Called by
+# 1-step.yml before its check job(s). The filename must not start with a digit,
+# so Step 0 doesn't disable it.
+#
+# On the repo's initial commit (the copy from the template) it does nothing and
+# `comment-id` is empty, so the caller's check jobs can skip on that output.
+
+on:
+  workflow_call:
+    outputs:
+      issue-url:
+        description: "URL of the exercise issue"
+        value: ${{ jobs.find_exercise.outputs.issue-url }}
+      issue-number:
+        description: "Number of the exercise issue"
+        value: ${{ jobs.find_exercise.outputs.issue-number }}
+      comment-id:
+        description: "ID of the 'checking your work' comment; empty on the initial commit"
+        value: ${{ jobs.post_checking_message.outputs.comment-id }}
+
+jobs:
+  check_initial_commit:
+    name: Check if initial commit
+    runs-on: ubuntu-latest
+    outputs:
+      is-initial: ${{ steps.check.outputs.is-initial }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Check commit count
+        id: check
+        run: |
+          commit_count=$(git rev-list --count HEAD)
+          echo "is-initial=$([[ $commit_count -eq 1 ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+  find_exercise:
+    name: Find Exercise Issue
+    needs: check_initial_commit
+    if: needs.check_initial_commit.outputs.is-initial == 'false'
+    uses: ./.github/workflows/find-exercise-issue.yml
+
+  post_checking_message:
+    name: Post checking work message
+    needs: [find_exercise]
+    runs-on: ubuntu-latest
+    outputs:
+      comment-id: ${{ steps.post.outputs.comment-id }}
+    env:
+      ISSUE_NUMBER: ${{ needs.find_exercise.outputs.issue-number }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Post checking work message
+        id: post
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            // Relative image links (../images/*, ../../images/*) don't resolve in issue
+            // comments, so point them at the default branch. Done at render time,
+            // so nothing has to be committed to main.
+            const imageBase = `https://github.com/${context.repo.owner}/${context.repo.repo}/blob/${context.payload.repository.default_branch}/.github/images/`;
+            const fixImages = (text) => text.replace(/(?:\.\.\/)+images\/([^\s)"']+)/g, (_, file) => `${imageBase}${file}?raw=true`);
+            const body = fixImages(fs.readFileSync('.github/markdown-templates/exercise/checking-work.md', 'utf8'));
+
+            const { data: comment } = await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number(process.env.ISSUE_NUMBER),
+              body
+            });
+            core.setOutput('comment-id', comment.id);

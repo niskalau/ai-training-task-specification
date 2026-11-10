@@ -1,0 +1,19 @@
+name: Step 0
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  actions: write
+  issues: write
+
+jobs:
+  start_exercise:
+    name: Start exercise
+    uses: ./.github/workflows/exercise-start.yml
+    with:
+      module-title: "Task Specification"
+      intro-message: "Learn to orchestrate AI for rapid software development, transitioning from a manual coder to an AI-driven developer."

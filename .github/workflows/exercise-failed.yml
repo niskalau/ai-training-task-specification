@@ -1,0 +1,51 @@
+name: Exercise Failed
+
+# Shared exercise workflow: identical in every exercise repo. It is maintained
+# centrally and copied into each repo, so don't edit it per repo. Called by
+# 1-step.yml when one of its check jobs fails. The filename must not start with
+# a digit, so Step 0 doesn't disable it.
+
+on:
+  workflow_call:
+    inputs:
+      feedback-message:
+        description: 'What to fix, shown to the learner in place of the checking comment'
+        required: true
+        type: string
+      comment-id:
+        description: "ID of the 'checking your work' comment (exercise-checking.yml output)"
+        required: true
+        type: string
+
+jobs:
+  post_mistake_message:
+    name: Post mistake message
+    runs-on: ubuntu-latest
+    env:
+      FEEDBACK_MESSAGE: ${{ inputs.feedback-message }}
+      CHECKING_COMMENT_ID: ${{ inputs.comment-id }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Post mistake message
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            // Relative image links (../images/*, ../../images/*) don't resolve in issue
+            // comments, so point them at the default branch. Done at render time,
+            // so nothing has to be committed to main.
+            const imageBase = `https://github.com/${context.repo.owner}/${context.repo.repo}/blob/${context.payload.repository.default_branch}/.github/images/`;
+            const fixImages = (text) => text.replace(/(?:\.\.\/)+images\/([^\s)"']+)/g, (_, file) => `${imageBase}${file}?raw=true`);
+
+            let body = fixImages(fs.readFileSync('.github/markdown-templates/exercise/step-mistake.md', 'utf8'));
+            body = body.replaceAll('{{ feedback_message }}', process.env.FEEDBACK_MESSAGE);
+
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: Number(process.env.CHECKING_COMMENT_ID),
+              body
+            });

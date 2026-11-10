@@ -1,0 +1,116 @@
+name: Exercise Passed
+
+# Shared exercise workflow: identical in every exercise repo. It is maintained
+# centrally and copied into each repo, so don't edit it per repo. Called by
+# 1-step.yml when all its check jobs pass. The filename must not start with a
+# digit, so Step 0 doesn't disable it.
+
+on:
+  workflow_call:
+    inputs:
+      module-title:
+        description: 'Module title, used in the congratulations comment'
+        required: true
+        type: string
+      issue-url:
+        description: 'URL of the exercise issue (exercise-checking.yml output)'
+        required: true
+        type: string
+      issue-number:
+        description: 'Number of the exercise issue (exercise-checking.yml output)'
+        required: true
+        type: string
+      comment-id:
+        description: "ID of the 'checking your work' comment (exercise-checking.yml output)"
+        required: true
+        type: string
+
+jobs:
+  post_final_content:
+    name: Post final content
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      # In a called workflow, github.workflow is the caller's name ("Step 1"),
+      # so this disables the calling step workflow.
+      - name: Disable current workflow
+        run: |
+          gh workflow disable "${{github.workflow}}"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  finish_exercise:
+    name: Finish Exercise
+    runs-on: ubuntu-latest
+    env:
+      MODULE_TITLE: ${{ inputs.module-title }}
+      ISSUE_NUMBER: ${{ inputs.issue-number }}
+      ISSUE_URL: ${{ inputs.issue-url }}
+      CHECKING_COMMENT_ID: ${{ inputs.comment-id }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Update issue and build final README
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs = require('fs');
+            // Relative image links (../images/*, ../../images/*) don't resolve in issue
+            // comments, so point them at the default branch. Done at render time,
+            // so nothing has to be committed to main.
+            const imageBase = `https://github.com/${context.repo.owner}/${context.repo.repo}/blob/${context.payload.repository.default_branch}/.github/images/`;
+            const fixImages = (text) => text.replace(/(?:\.\.\/)+images\/([^\s)"']+)/g, (_, file) => `${imageBase}${file}?raw=true`);
+
+            function render(path, vars) {
+              let text = fs.readFileSync(path, 'utf8');
+              for (const [key, value] of Object.entries(vars)) {
+                text = text.replaceAll(`{{ ${key} }}`, value);
+              }
+              return fixImages(text);
+            }
+
+            const finalComment = render('.github/markdown-templates/exercise/exercise-finished.md', {
+              title: process.env.MODULE_TITLE,
+              login: context.actor,
+              repo_full_name: `${context.repo.owner}/${context.repo.repo}`
+            });
+
+            const finalReadme = render('.github/markdown-templates/readme/exercise-finished.md', {
+              login: context.actor,
+              issue_url: process.env.ISSUE_URL
+            });
+
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: Number(process.env.CHECKING_COMMENT_ID),
+              body: finalComment
+            });
+
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number(process.env.ISSUE_NUMBER),
+              state: 'closed'
+            });
+
+            fs.writeFileSync('README.md', finalReadme);
+
+      # Best effort: orgs that require pull requests on main (repository rulesets)
+      # reject the bot's push. The exercise is already complete either way.
+      - name: Commit and push README
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Congratulations!🎉"
+            git push || echo "::warning title=README not updated::Could not push to the default branch (a ruleset probably requires pull requests). The exercise is complete; the README keeps its previous text."
+          fi

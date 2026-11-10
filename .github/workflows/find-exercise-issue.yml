@@ -1,0 +1,59 @@
+name: Find Exercise Issue
+
+on:
+  workflow_call:
+    inputs:
+      issue-title-text:
+        description: 'Text to search for within issue titles'
+        required: false
+        default: 'Exercise'
+        type: string
+    outputs:
+      issue-url:
+        description: "URL of the found issue"
+        value: ${{ jobs.find_exercise.outputs.issue-url }}
+      issue-number:
+        description: "Number of the found issue"
+        value: ${{ jobs.find_exercise.outputs.issue-number }}
+
+permissions:
+  issues: read
+
+jobs:
+  find_exercise:
+    name: Find exercise by issue title
+    runs-on: ubuntu-latest
+
+    outputs:
+      issue-url: ${{ steps.find.outputs.ISSUE_URL }}
+      issue-number: ${{ steps.find.outputs.ISSUE_NUMBER }}
+
+    steps:
+      - name: Find exercise issue
+        id: find
+        uses: actions/github-script@v8
+        env:
+          ISSUE_TITLE_TEXT: ${{ inputs.issue-title-text }}
+        with:
+          script: |
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'all',
+              sort: 'created',
+              direction: 'desc',
+              per_page: 50
+            });
+
+            const match = issues.find(
+              issue => !issue.pull_request && issue.title.includes(process.env.ISSUE_TITLE_TEXT)
+            );
+
+            if (!match) {
+              core.setFailed('No exercise issue found');
+              return;
+            }
+
+            core.info(`Exercise issue found: #${match.number} (${match.html_url})`);
+            core.setOutput('ISSUE_URL', match.html_url);
+            core.setOutput('ISSUE_NUMBER', match.number);
